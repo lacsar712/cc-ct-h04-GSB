@@ -53,7 +53,9 @@ class OffsetSubmission(models.Model):
     reviewed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        ordering = ["-created_at"]
+        # 落盘口径：提交时间倒序（新交顶到队首），同刻用自增 id 决胜。
+        # 列表与“同刀最近”都必须走这一套键，禁止别处另写一条排序键。
+        ordering = ["-created_at", "-id"]
 
     def __str__(self) -> str:
         return f"{self.tool_code} {self.offset_um}µm"

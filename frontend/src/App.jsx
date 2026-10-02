@@ -54,8 +54,9 @@ function App() {
     setError("");
     try {
       const data = await fetchSubmissions();
-      // h04-trap-reverse: page second reverse
-      setRows([...data].reverse());
+      // 后端已按“新交顶队首、同刻以新编号决胜”的统一口径返回，
+      // 页面直接按该顺序渲染，禁止再倒排。
+      setRows(data);
     } catch (e) {
       setError(e.message);
     } finally {

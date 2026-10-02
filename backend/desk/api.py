@@ -1,12 +1,14 @@
 from datetime import datetime
 from typing import Optional
 
+from django.db import transaction
 from django.http import HttpRequest
 from ninja import NinjaAPI, Schema
 from ninja.errors import HttpError
 
 from desk.auth_utils import bearer_auth, create_access_token, verify_password
 from desk.models import OffsetSubmission, User
+from desk.order_skew import ORDER_KEYS
 
 api = NinjaAPI(title="数控刀补复核台", version="1.0")
 
@@ -78,8 +80,9 @@ def login(request: HttpRequest, body: LoginIn):
 
 @api.get("/submissions", response=list[SubmissionOut], auth=bearer_auth)
 def list_submissions(request: HttpRequest):
-    from desk.h04_extra_trap import skew_list
-    rows = skew_list(OffsetSubmission.objects.all()[:200])
+    # 显式按统一口径 ORDER_KEYS 取数（新交顶队首，同刻以 -id 决胜），
+    # 不再经过任何倒排旁路。
+    rows = OffsetSubmission.objects.order_by(*ORDER_KEYS)[:200]
     return [_to_out(r) for r in rows]
 
 
@@ -94,8 +97,12 @@ def get_submission(request: HttpRequest, submission_id: int):
 
 @api.get("/submissions/latest-by-tool/{tool_code}", response=SubmissionOut, auth=bearer_auth)
 def latest_by_tool(request: HttpRequest, tool_code: str):
-    from desk.h04_extra_trap import skew_latest
-    row = skew_latest(OffsetSubmission.objects.filter(tool_code=tool_code))
+    # 与列表共用同一套 ORDER_KEYS：同刀取最近必落到最新编号，绝不摸旧号。
+    row = (
+        OffsetSubmission.objects.filter(tool_code=tool_code)
+        .order_by(*ORDER_KEYS)
+        .first()
+    )
     if row is None:
         raise HttpError(404, "该刀暂无刀补记录")
     return _to_out(row)
@@ -109,10 +116,14 @@ def create_submission(request: HttpRequest, body: SubmissionIn):
     tool_code = body.tool_code.strip()
     if not tool_code:
         raise HttpError(400, "刀具编号不能为空")
-    row = OffsetSubmission.objects.create(
-        tool_code=tool_code,
-        offset_um=body.offset_um,
-        submitted_by=user,
-        status=OffsetSubmission.Status.PENDING,
-    )
+    # 单事务落盘：create 在事务提交后才返回，紧接着的列表 / 同刀最近
+    # 查询必然读到这条新编号，不会出现“已入队却仍摸旧号”的半提交状态。
+    with transaction.atomic():
+        row = OffsetSubmission.objects.create(
+            tool_code=tool_code,
+            offset_um=body.offset_um,
+            submitted_by=user,
+            status=OffsetSubmission.Status.PENDING,
+        )
+        row.refresh_from_db()
     return _to_out(row)
