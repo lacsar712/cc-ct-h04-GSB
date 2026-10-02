@@ -54,8 +54,8 @@ function App() {
     setError("");
     try {
       const data = await fetchSubmissions();
-      // h04-trap-reverse: page second reverse
-      setRows([...data].reverse());
+      // 后端已按 (-created_at, -id) 返回，新交在队首；页面不得再倒排。
+      setRows(data);
     } catch (e) {
       setError(e.message);
     } finally {
